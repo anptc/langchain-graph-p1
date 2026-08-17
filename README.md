@@ -1,14 +1,19 @@
-# First LangGraph agent (Gemini 2.5 Flash)
+# Enterprise LangGraph agent (Gemini 2.5 Flash)
 
-A single LangGraph agent that calls Gemini 2.5 Flash on Vertex AI using
+A **supervisor + catalogued specialists** agent on Vertex AI using
 [Application Default Credentials](https://cloud.google.com/docs/authentication/application-default-credentials)
-(no API key). The graph is two nodes — `agent` and `tools` — so you can later
-add more nodes, subgraphs, and multi-agent routing without rewriting the LLM
-setup.
+(no Gemini API key). The parent graph is still two nodes — `agent` and `tools` —
+but specialists are registered in a catalog, and **tools are bound per principal**.
+A user who lacks `agent:weather` never sees `transfer_to_weather_agent` in the
+model schema.
 
 ```text
 START -> agent --(tool calls?)--> tools -> agent -> ... -> END
                  \--(no tools)--> END
+
+Specialists (shares, weather, …) run as nested graphs started by
+catalog-generated handoff tools. Adding a specialist is a new folder plus
+one import in catalog/registry.py — not a new transfer_* function.
 ```
 
 ## Prerequisites
@@ -22,11 +27,12 @@ START -> agent --(tool calls?)--> tools -> agent -> ... -> END
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+pip install -e .
 copy .env.example .env
 ```
 
-Edit `.env` and set `GOOGLE_CLOUD_PROJECT` to your GCP project id.
+`pip install -e .` installs the `src/` package (`enterprise_agent`). Edit `.env`
+and set `GOOGLE_CLOUD_PROJECT`. For shares, set `ALPHAVANTAGE_API_KEY`.
 
 Log in with Application Default Credentials (user account, local machine):
 
@@ -44,63 +50,118 @@ is used automatically.
 One-shot:
 
 ```powershell
-python -m agent.main "What is 21 + 21, and what time is it in UTC?"
+python -m enterprise_agent.apps.cli "What is 21 + 21, and what time is it in UTC?"
 ```
 
-Interactive chat:
+Interactive chat (all specialists, default `admin` / `*`):
 
 ```powershell
-python -m agent.main
+python -m enterprise_agent.apps.cli
 ```
 
-Local chat UI (browser):
+Restrict access (the weather handoff is omitted from the bound tools):
 
 ```powershell
-pip install -r requirements.txt
-python -m agent.ui
+python -m enterprise_agent.apps.cli --role shares_only "Weather in Bengaluru?"
+python -m enterprise_agent.apps.cli --role shares_fundamentals_only "What is IBM's latest quote?"
+python -m enterprise_agent.apps.cli --role shares_fundamentals_only "IBM sector, PE, and a one-line overview"
+python -m enterprise_agent.apps.cli --scopes agent:weather "IBM latest quote?"
 ```
 
-Then open http://127.0.0.1:8000 — same graph as the CLI. Architecture page: http://127.0.0.1:8000/architecture
-
-LangChain/LangGraph do not ship a chat UI in the Python packages. LangSmith Studio and Agent Chat UI are separate products (they need a LangGraph Agent Server). This repo’s page is the no-account option.
-
-The parent agent has `get_current_utc_time` and `add_numbers`. Specialists:
-
-- **Shares** — [Alpha Vantage](https://www.alphavantage.co/documentation/). Set `ALPHAVANTAGE_API_KEY` in `.env`. Free-tier is often 5 calls/minute.
-- **Weather** — [Open-Meteo](https://open-meteo.com/en/docs) (no API key): geocode, current conditions, daily forecast, air quality.
-
-Examples:
+Local chat UI:
 
 ```powershell
-python -m agent.main "What is IBM's latest quote and a one-line company overview?"
-python -m agent.main "Weather in Bengaluru for the next 3 days, and the air quality."
+python -m enterprise_agent.api.app
 ```
+
+Open http://127.0.0.1:8000 — same runtime as the CLI. Architecture:
+http://127.0.0.1:8000/architecture
+
+Use the **access** control on the chat page (or send `X-Role` / `X-Scopes`) to
+simulate SSO claims. Production should replace those headers with a verified JWT.
+
+Parent general tools: `get_current_utc_time`, `add_numbers`. Catalogued specialists:
+
+- **Shares** (`agent:shares`) — [Alpha Vantage](https://www.alphavantage.co/documentation/). Nested graphs:
+  - **Quote** (`agent:shares:quote`) — latest quote, daily prices, movers, news
+  - **Fundamentals** (`agent:shares:fundamentals`) — company overview (sector, PE, EPS, market cap)
+- **Weather** (`agent:weather`) — [Open-Meteo](https://open-meteo.com/en/docs) (no API key).
+
+```powershell
+python -m enterprise_agent.apps.cli "What is IBM's latest quote and a one-line company overview?"
+python -m enterprise_agent.apps.cli "Weather in Bengaluru for the next 3 days, and the air quality."
+```
+
+## Access control
+
+Identity is a `Principal` (`user_id`, `tenant_id`, `scopes`, `roles`). It is
+injected via a context variable for the duration of `invoke` — never taken from
+the user message.
+
+| Layer | What it does |
+|--------|----------------|
+| API / CLI | Headers (`X-User-Id`, `X-Tenant-Id`, `X-Role`, `X-Scopes`) or `--role` / `--scopes`. Stand-in for OIDC. |
+| Entitlements | Named roles (`admin`, `analyst`, `shares_only`, `shares_fundamentals_only`, `weather_only`, `general`) map to scopes. Inner shares graphs use `agent:shares:quote` and `agent:shares:fundamentals`. |
+| Bind time | Supervisor is compiled (and cached) for the set of allowed agent ids. Forbidden handoffs are not in the tool schema. |
+| Run time | Each specialist tool re-checks scopes and writes an audit event. |
+
+`GET /api/v1/me` and `GET /api/v1/catalog` show the current principal and which
+agents they may use. `GET /api/v1/audit` lists that user's recent tool events.
+
+Threads are keyed by **tenant + user + thread_id** so two users cannot share a
+session by guessing a UUID.
 
 ## Project layout
 
+```text
+src/enterprise_agent/
+  api/                 FastAPI: headers → principal → runtime
+  apps/cli.py          CLI
+  catalog/             AgentSpec + registry (add specialists here)
+  core/                settings, LLM factory, HTTP helper
+  identity/            Principal, roles → scopes
+  orchestration/       supervisor, generic handoff, per-principal bind
+  persistence/         in-memory threads + audit log
+  specialists/
+    _base/             shared react-loop factory + tool policy
+    shares/            supervisor + quote/ + fundamentals/ + Alpha Vantage client
+    weather/           spec, graph, tools, Open-Meteo client
+web/                   chat + architecture pages
+tests/                 entitlements and tool-policy tests
+```
+
 | Path | Role |
 |------|------|
-| `agent/llm.py` | Gemini 2.5 Flash via Vertex AI + ADC |
-| `agent/tools.py` | Tools the agent can call |
-| `agent/graph.py` | Parent `StateGraph` (supervisor) |
-| `agent/shares.py` | Shares sub-agent graph |
-| `agent/shares_tools.py` | Alpha Vantage tools for that sub-agent |
-| `agent/alphavantage.py` | Alpha Vantage HTTP client |
-| `agent/weather.py` | Weather sub-agent graph |
-| `agent/weather_tools.py` | Open-Meteo tools for that sub-agent |
-| `agent/openmeteo.py` | Open-Meteo HTTP client (no key) |
-| `agent/main.py` | CLI |
+| `core/llm.py` | Gemini 2.5 Flash via Vertex AI + ADC |
+| `catalog/registry.py` | Loads specialist specs; filters by principal |
+| `orchestration/supervisor.py` | Parent `StateGraph` |
+| `orchestration/handoff.py` | Generic `transfer_to_<id>_agent` |
+| `orchestration/runtime.py` | Graph cached by allowed agent ids |
+| `specialists/shares/` | Shares supervisor; nested quote + fundamentals graphs |
+| `specialists/weather/` | Weather nested graph + Open-Meteo |
+| `identity/` | Principal and entitlements |
+| `api/app.py` | HTTP + static UI |
 
-## Next steps (multi-node / multi-agent)
+## Add a specialist
 
-Keep `get_llm()` as the shared model factory. Then:
+1. Create `specialists/<name>/` with `client.py`, `tools.py`, `spec.py` (`AgentSpec`), `graph.py`.
+2. Import the spec in `catalog/registry.py`.
+3. Assign `required_scopes` (e.g. `agent:research`). Grant that scope via role or IdP later.
 
-1. **More nodes** — add a `research` or `summarize` node to `StateGraph` and
-   route with a conditional edge.
-2. **Subagents** — compile a second graph and add it with `graph.add_node("researcher", other_graph)`.
-3. **Multi-agent** — add a supervisor node that routes to specialist agents
-   (researcher, coder, reviewer) based on the last message.
+Do not add a handoff function to the parent. Do not put FastAPI routes inside a specialist package.
 
-`create_agent` from `langchain.agents` is the higher-level factory that builds
-this same loop. This repo keeps the graph explicit so those later changes stay
-visible.
+## Tests
+
+```powershell
+pip install -e ".[dev]"
+pytest
+```
+
+These tests do not call Vertex or vendor APIs.
+
+## Next steps
+
+- Replace header identity with OIDC (Entra / Google / Okta) and store entitlements per tenant.
+- Swap in-memory sessions for a Postgres LangGraph checkpointer.
+- Stream with `astream` so inner tools appear in the UI while they run.
+- Optional: `graph.add_node("weather", weather_graph)` if inner messages should live on the parent thread.

@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "enterprise-agent"
+version = "0.1.0"
+description = "LangGraph supervisor with catalogued specialist agents and principal-scoped tools"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "langchain>=1.0.0",
+    "langchain-core>=1.0.0",
+    "langgraph>=1.0.0",
+    "langchain-google-genai>=4.0.0",
+    "google-auth>=2.0.0",
+    "python-dotenv>=1.0.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "fastapi>=0.115.0",
+    "uvicorn>=0.32.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0"]
+
+[project.scripts]
+enterprise-agent = "enterprise_agent.apps.cli:main"
+enterprise-agent-ui = "enterprise_agent.api.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

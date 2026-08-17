@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Chat — Enterprise LangGraph agent</title>
+  <style>
+    :root {
+      --bg: #f4efe6;
+      --paper: #fffaf3;
+      --ink: #1c1915;
+      --muted: #5c564c;
+      --line: #d9d0c2;
+      --accent: #2f6f5e;
+      --user: #6b5b3e;
+      --tools: #3d5a80;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Segoe UI", "IBM Plex Sans", system-ui, sans-serif;
+      background:
+        radial-gradient(1200px 500px at 10% -10%, #efe4d0 0%, transparent 55%),
+        var(--bg);
+      color: var(--ink);
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+    }
+    header, footer {
+      max-width: 760px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 1rem 1.25rem;
+    }
+    header { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; }
+    .kicker {
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      font-size: 0.72rem;
+      color: var(--accent);
+      font-weight: 700;
+      margin: 0 0 0.25rem;
+    }
+    h1 { font-size: 1.25rem; margin: 0; }
+    a { color: var(--accent); }
+    #log {
+      max-width: 760px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 0 1.25rem 1rem;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 0.7rem;
+    }
+    .msg {
+      max-width: 85%;
+      padding: 0.7rem 0.9rem;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: var(--paper);
+      white-space: pre-wrap;
+      line-height: 1.45;
+    }
+    .msg.user { align-self: flex-end; background: #efe8dc; border-color: #d3c6b0; }
+    .msg.assistant { align-self: flex-start; }
+    .msg.tool, .msg.call {
+      align-self: flex-start;
+      font-size: 0.88rem;
+      background: #eef2f7;
+      border-color: #c5d0de;
+      color: var(--tools);
+    }
+    .role { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin-bottom: 0.25rem; }
+    form {
+      max-width: 760px;
+      width: 100%;
+      margin: 0 auto 1.25rem;
+      padding: 0 1.25rem;
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      gap: 0.5rem;
+    }
+    .access {
+      max-width: 760px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 0 1.25rem 0.6rem;
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+    select {
+      font: inherit;
+      border: 1px solid var(--line);
+      background: var(--paper);
+      border-radius: 8px;
+      padding: 0.3rem 0.5rem;
+    }
+    textarea {
+      resize: none;
+      min-height: 48px;
+      max-height: 140px;
+      padding: 0.7rem 0.8rem;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      font: inherit;
+      background: var(--paper);
+    }
+    button {
+      border: 0;
+      border-radius: 12px;
+      padding: 0 1rem;
+      background: var(--accent);
+      color: #fff;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+    button:disabled { opacity: 0.6; cursor: wait; }
+    .error { color: #8b2e1a; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <p class="kicker">local UI · same runtime as the CLI</p>
+      <h1>Enterprise Gemini agent</h1>
+    </div>
+    <a href="/architecture">Architecture</a>
+  </header>
+
+  <div id="log">
+    <div class="msg assistant">
+      <div class="role">agent</div>
+      Ask anything. Change Access to simulate which specialists this user may call. Production will use SSO, not this dropdown.
+    </div>
+  </div>
+
+  <div class="access">
+    <label for="role">Access</label>
+    <select id="role">
+      <option value="admin">admin (all specialists)</option>
+      <option value="analyst">analyst (shares + weather)</option>
+      <option value="shares_only">shares_only (quote + fundamentals)</option>
+      <option value="shares_fundamentals_only">shares_fundamentals_only</option>
+      <option value="weather_only">weather_only</option>
+      <option value="general">general (no specialists)</option>
+    </select>
+  </div>
+
+  <form id="form">
+    <textarea id="input" rows="1" placeholder="What is 21 + 21, and what time is it in UTC?" autofocus></textarea>
+    <button class="ghost" type="button" id="reset">New</button>
+    <button type="submit" id="send">Send</button>
+  </form>
+
+  <script>
+    const log = document.getElementById("log");
+    const form = document.getElementById("form");
+    const input = document.getElementById("input");
+    const send = document.getElementById("send");
+    const role = document.getElementById("role");
+    let threadId = null;
+
+    function headers() {
+      return {
+        "Content-Type": "application/json",
+        "X-Role": role.value,
+        "X-User-Id": "ui-" + role.value,
+        "X-Tenant-Id": "local",
+      };
+    }
+
+    function add(roleName, text, extraClass) {
+      const el = document.createElement("div");
+      el.className = "msg " + (extraClass || roleName);
+      const label = document.createElement("div");
+      label.className = "role";
+      label.textContent = roleName;
+      el.appendChild(label);
+      el.appendChild(document.createTextNode(text || ""));
+      log.appendChild(el);
+      log.scrollTop = log.scrollHeight;
+    }
+
+    function render(messages) {
+      log.innerHTML = "";
+      for (const m of messages) {
+        if (m.role === "user") add("you", m.content, "user");
+        else if (m.role === "tool") add("tool · " + (m.name || ""), m.content, "tool");
+        else {
+          if (m.tool_calls && m.tool_calls.length) {
+            for (const c of m.tool_calls) {
+              add("agent → tool", c.name + " " + JSON.stringify(c.args || {}), "call");
+            }
+          }
+          if (m.content) add("agent", m.content, "assistant");
+        }
+      }
+    }
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const message = input.value.trim();
+      if (!message) return;
+      input.value = "";
+      add("you", message, "user");
+      send.disabled = true;
+      try {
+        const res = await fetch("/api/v1/chat", {
+          method: "POST",
+          headers: headers(),
+          body: JSON.stringify({ message, thread_id: threadId }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || res.statusText);
+        threadId = data.thread_id;
+        render(data.messages);
+      } catch (err) {
+        add("error", String(err.message || err), "error");
+      } finally {
+        send.disabled = false;
+        input.focus();
+      }
+    });
+
+    document.getElementById("reset").addEventListener("click", async () => {
+      await fetch("/api/v1/reset", {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ message: "", thread_id: threadId }),
+      }).then((r) => r.json()).then((d) => { threadId = d.thread_id; });
+      log.innerHTML = "";
+      add("agent", "New thread. Previous messages are gone.", "assistant");
+    });
+
+    role.addEventListener("change", () => {
+      threadId = null;
+      log.innerHTML = "";
+      add("agent", "Access changed to " + role.value + ". New principal, new thread. Handoff tools for denied specialists are not bound.", "assistant");
+    });
+
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        form.requestSubmit();
+      }
+    });
+  </script>
+</body>
+</html>

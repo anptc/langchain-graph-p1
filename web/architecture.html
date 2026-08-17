@@ -1,0 +1,793 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Enterprise LangGraph Agent — Architecture</title>
+  <style>
+    :root {
+      --bg: #f4efe6;
+      --paper: #fffaf3;
+      --ink: #1c1915;
+      --muted: #5c564c;
+      --line: #d9d0c2;
+      --accent: #2f6f5e;
+      --parent: #2f6f5e;
+      --shares: #3d5a80;
+      --cloud: #7a4e2d;
+      --io: #6b5b3e;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "IBM Plex Sans", system-ui, sans-serif;
+      background:
+        radial-gradient(1200px 500px at 10% -10%, #efe4d0 0%, transparent 55%),
+        var(--bg);
+      color: var(--ink);
+      line-height: 1.55;
+    }
+
+    header {
+      padding: 2.5rem 1.5rem 1.5rem;
+      max-width: 1080px;
+      margin: 0 auto;
+    }
+    header p.kicker {
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      font-size: 0.72rem;
+      color: var(--accent);
+      font-weight: 700;
+      margin: 0 0 0.5rem;
+    }
+    h1 { font-size: clamp(1.7rem, 3vw, 2.4rem); margin: 0 0 0.6rem; line-height: 1.2; }
+    .lede { color: var(--muted); max-width: 48rem; margin: 0; }
+
+    nav {
+      max-width: 1080px;
+      margin: 0 auto 1.5rem;
+      padding: 0 1.5rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+    nav a {
+      color: var(--ink);
+      text-decoration: none;
+      font-size: 0.85rem;
+      border: 1px solid var(--line);
+      background: var(--paper);
+      padding: 0.35rem 0.7rem;
+      border-radius: 999px;
+    }
+    nav a:hover { border-color: var(--accent); color: var(--accent); }
+
+    main {
+      max-width: 1080px;
+      margin: 0 auto 4rem;
+      padding: 0 1.5rem;
+      display: grid;
+      gap: 1.25rem;
+    }
+
+    section {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 1.4rem 1.4rem 1.5rem;
+      box-shadow: 0 8px 24px rgba(28, 25, 21, 0.04);
+    }
+    h2 { margin: 0 0 0.75rem; font-size: 1.25rem; }
+    h3 { margin: 1.2rem 0 0.45rem; font-size: 1.02rem; }
+    p { margin: 0.5rem 0; }
+    ul, ol { margin: 0.4rem 0 0; padding-left: 1.2rem; }
+    li { margin: 0.25rem 0; }
+    code {
+      font-family: "Cascadia Code", "Consolas", ui-monospace, monospace;
+      font-size: 0.9em;
+      background: #efe8dc;
+      padding: 0.08em 0.35em;
+      border-radius: 4px;
+    }
+
+    .diagram {
+      margin: 1rem 0 0.4rem;
+      overflow-x: auto;
+      background: #fbf7f0;
+      border: 1px dashed var(--line);
+      border-radius: 12px;
+      padding: 0.75rem;
+    }
+    svg { display: block; width: 100%; height: auto; min-width: 860px; }
+    .caption { font-size: 0.85rem; color: var(--muted); margin-top: 0.4rem; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.92rem;
+      margin-top: 0.6rem;
+    }
+    th, td {
+      text-align: left;
+      border-bottom: 1px solid var(--line);
+      padding: 0.5rem 0.4rem;
+      vertical-align: top;
+    }
+    th { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+
+    .steps { counter-reset: step; display: grid; gap: 0.7rem; margin-top: 0.8rem; }
+    .step {
+      display: grid;
+      grid-template-columns: 2.1rem 1fr;
+      gap: 0.7rem;
+      align-items: start;
+    }
+    .step::before {
+      counter-increment: step;
+      content: counter(step);
+      width: 2.1rem; height: 2.1rem;
+      border-radius: 50%;
+      background: var(--accent);
+      color: #fff;
+      display: grid;
+      place-items: center;
+      font-weight: 700;
+      font-size: 0.9rem;
+    }
+    .step.shares::before { background: var(--shares); }
+    .step.cloud::before { background: var(--cloud); }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.6rem 1rem;
+      font-size: 0.82rem;
+      color: var(--muted);
+      margin: 0.4rem 0 0;
+    }
+    .legend span { display: inline-flex; align-items: center; gap: 0.35rem; }
+    .swatch {
+      width: 0.85rem; height: 0.85rem; border-radius: 3px; display: inline-block;
+    }
+
+    footer {
+      max-width: 1080px;
+      margin: 0 auto 2rem;
+      padding: 0 1.5rem;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <p class="kicker">enterprise_agent · catalog + principal-scoped tools</p>
+    <h1>Architecture: supervisor, catalog, identity, specialists</h1>
+    <p class="lede">
+      Three compiled LangGraphs still share one Gemini factory. Specialists are
+      catalog entries, not hand-written <code>transfer_*</code> functions. The
+      parent never calls Alpha Vantage or Open-Meteo. Handoff tools are generated
+      from the catalog and <strong>bound only for agents the principal may use</strong>.
+      Each graph keeps its own <code>MessagesState</code>.
+    </p>
+  </header>
+
+  <nav>
+    <a href="#identity">Identity</a>
+    <a href="#e2e">End-to-end</a>
+    <a href="#messages">Messages</a>
+    <a href="#paths">Three paths</a>
+    <a href="#layers">Layers</a>
+    <a href="#graphs">Graphs</a>
+    <a href="#files">Files</a>
+    <a href="#auth">Auth</a>
+    <a href="#ui">UI</a>
+    <a href="#next">Next</a>
+  </nav>
+
+  <main>
+    <section id="identity">
+      <h2>Identity and catalog (enterprise path)</h2>
+      <p>
+        HTTP and CLI never compile one global graph with every specialist.
+        They resolve a <code>Principal</code>, ask the catalog which
+        <code>AgentSpec</code>s that principal may use, and bind only those
+        handoff tools. Forbidden agents are omitted from Gemini’s tool schema
+        (the model cannot call what it cannot see). Tools still re-check scopes
+        at runtime and emit audit events.
+      </p>
+      <div class="diagram">
+        <svg viewBox="0 0 1040 170" role="img">
+          <title>Principal to filtered supervisor</title>
+          <rect x="16" y="40" width="160" height="80" rx="10" fill="#6b5b3e" />
+          <text x="96" y="74" text-anchor="middle" fill="#fff" font-size="13">X-Role / JWT</text>
+          <text x="96" y="94" text-anchor="middle" fill="#f3e6db" font-size="11">CLI --role</text>
+          <rect x="200" y="40" width="180" height="80" rx="10" fill="#2f6f5e" />
+          <text x="290" y="74" text-anchor="middle" fill="#fff" font-size="13">Principal</text>
+          <text x="290" y="94" text-anchor="middle" fill="#d7efe6" font-size="11">scopes + tenant</text>
+          <rect x="404" y="40" width="200" height="80" rx="10" fill="#3d5a80" />
+          <text x="504" y="74" text-anchor="middle" fill="#fff" font-size="13">catalog.allowed_specs</text>
+          <text x="504" y="94" text-anchor="middle" fill="#dce8f5" font-size="11">filter AgentSpec</text>
+          <rect x="628" y="40" width="200" height="80" rx="10" fill="#2f6f5e" />
+          <text x="728" y="74" text-anchor="middle" fill="#fff" font-size="13">runtime.graph_for</text>
+          <text x="728" y="94" text-anchor="middle" fill="#d7efe6" font-size="11">cache by agent ids</text>
+          <rect x="852" y="40" width="170" height="80" rx="10" fill="#7a4e2d" />
+          <text x="937" y="74" text-anchor="middle" fill="#fff" font-size="13">bind_tools</text>
+          <text x="937" y="94" text-anchor="middle" fill="#f3e6db" font-size="11">allowed handoffs only</text>
+        </svg>
+      </div>
+      <table>
+        <thead>
+          <tr><th>Role</th><th>Scopes</th><th>Bound specialists</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>admin</code></td><td><code>*</code></td><td>shares (quote + fundamentals), weather</td></tr>
+          <tr><td><code>analyst</code></td><td><code>agent:shares</code>, <code>agent:shares:quote</code>, <code>agent:shares:fundamentals</code>, <code>agent:weather</code></td><td>shares (both nested), weather</td></tr>
+          <tr><td><code>shares_only</code></td><td>all <code>agent:shares*</code> scopes</td><td>shares quote + fundamentals</td></tr>
+          <tr><td><code>shares_fundamentals_only</code></td><td><code>agent:shares</code>, <code>agent:shares:fundamentals</code></td><td>shares supervisor; quote handoff not bound</td></tr>
+          <tr><td><code>weather_only</code></td><td><code>agent:weather</code></td><td>weather</td></tr>
+          <tr><td><code>general</code></td><td>(none)</td><td>general tools only</td></tr>
+        </tbody>
+      </table>
+      <p class="caption">
+        Headers <code>X-User-Id</code>, <code>X-Tenant-Id</code>, <code>X-Role</code>,
+        <code>X-Scopes</code> are a local stand-in for SSO. Threads are stored as
+        <code>(tenant_id, user_id, thread_id)</code>.
+      </p>
+      <h3>Shares nested graphs</h3>
+      <p>
+        The parent catalog still has one <code>shares</code> agent.
+        Inside it, a shares supervisor binds
+        <code>transfer_to_shares_quote_agent</code> and/or
+        <code>transfer_to_shares_fundamentals_agent</code> from
+        <code>specialists/shares/subcatalog.py</code>. Quote HTTP never runs
+        for <code>shares_fundamentals_only</code> because that handoff is omitted
+        at bind time.
+      </p>
+    </section>
+
+    <section id="e2e">
+      <h2>End-to-end flow (stock question)</h2>
+      <p>
+        Example user text: <code>IBM latest quote and a short overview</code>.
+        Everything below is one parent <code>invoke</code>. The shares graph
+        runs inside the parent <code>tools</code> node and must finish before
+        the parent model speaks again. CLI and UI both wait until step 16.
+        Weather questions follow the same 16 steps with
+        <code>transfer_to_weather_agent</code> and Open-Meteo instead of Alpha Vantage.
+      </p>
+      <p class="legend">
+        <span><i class="swatch" style="background:#6b5b3e"></i> entry</span>
+        <span><i class="swatch" style="background:#2f6f5e"></i> parent graph</span>
+        <span><i class="swatch" style="background:#3d5a80"></i> shares graph</span>
+        <span><i class="swatch" style="background:#7a4e2d"></i> Gemini / Vertex</span>
+        <span><i class="swatch" style="background:#4a5d73"></i> Alpha Vantage</span>
+      </p>
+      <div class="diagram" aria-label="Sequence across user parent shares Gemini Alpha Vantage">
+        <svg viewBox="0 0 1040 920" role="img">
+          <title>Sequence diagram for a stock question</title>
+          <defs>
+            <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#1c1915" />
+            </marker>
+          </defs>
+          <!-- lanes -->
+          <text x="70" y="28" text-anchor="middle" font-size="12" font-weight="700">You</text>
+          <text x="250" y="28" text-anchor="middle" font-size="12" font-weight="700">CLI / UI</text>
+          <text x="450" y="28" text-anchor="middle" font-size="12" font-weight="700">Parent graph</text>
+          <text x="650" y="28" text-anchor="middle" font-size="12" font-weight="700">Shares graph</text>
+          <text x="830" y="28" text-anchor="middle" font-size="12" font-weight="700">Gemini</text>
+          <text x="980" y="28" text-anchor="middle" font-size="12" font-weight="700">Alpha Vantage</text>
+          <line x1="70" y1="40" x2="70" y2="900" stroke="#d9d0c2" />
+          <line x1="250" y1="40" x2="250" y2="900" stroke="#d9d0c2" />
+          <line x1="450" y1="40" x2="450" y2="900" stroke="#d9d0c2" />
+          <line x1="650" y1="40" x2="650" y2="900" stroke="#d9d0c2" />
+          <line x1="830" y1="40" x2="830" y2="900" stroke="#d9d0c2" />
+          <line x1="980" y1="40" x2="980" y2="900" stroke="#d9d0c2" />
+
+          <!-- 1 prompt -->
+          <rect x="20" y="52" width="100" height="36" rx="8" fill="#6b5b3e" />
+          <text x="70" y="75" text-anchor="middle" fill="#fff" font-size="11">1. prompt</text>
+          <line x1="120" y1="70" x2="244" y2="70" stroke="#1c1915" marker-end="url(#a)" />
+
+          <!-- 2 compile + invoke -->
+          <rect x="175" y="100" width="150" height="44" rx="8" fill="#6b5b3e" />
+          <text x="250" y="118" text-anchor="middle" fill="#fff" font-size="11">2. resolve Principal</text>
+          <text x="250" y="134" text-anchor="middle" fill="#f3e6db" font-size="10">invoke_supervisor</text>
+          <line x1="325" y1="122" x2="444" y2="122" stroke="#1c1915" marker-end="url(#a)" />
+
+          <!-- 3 START agent -->
+          <rect x="370" y="156" width="160" height="44" rx="8" fill="#2f6f5e" />
+          <text x="450" y="174" text-anchor="middle" fill="#fff" font-size="11">3. START → agent</text>
+          <text x="450" y="190" text-anchor="middle" fill="#d7efe6" font-size="10">+ parent system prompt</text>
+          <line x1="530" y1="178" x2="824" y2="178" stroke="#1c1915" marker-end="url(#a)" />
+
+          <!-- 4 gemini parent -->
+          <rect x="760" y="156" width="140" height="44" rx="8" fill="#7a4e2d" />
+          <text x="830" y="174" text-anchor="middle" fill="#fff" font-size="11">4. Vertex Gemini</text>
+          <text x="830" y="190" text-anchor="middle" fill="#f3e6db" font-size="10">ADC · parent tools schema</text>
+          <line x1="760" y1="200" x2="456" y2="230" stroke="#1c1915" marker-end="url(#a)" />
+
+          <!-- 5 AIMessage tool_calls -->
+          <rect x="360" y="218" width="180" height="48" rx="8" fill="#2f6f5e" />
+          <text x="450" y="238" text-anchor="middle" fill="#fff" font-size="11">5. AIMessage</text>
+          <text x="450" y="254" text-anchor="middle" fill="#d7efe6" font-size="10">tool_calls: handoff(task)</text>
+
+          <!-- 6 tools_condition -->
+          <rect x="360" y="280" width="180" height="40" rx="8" fill="#fffaf3" stroke="#2f6f5e" />
+          <text x="450" y="305" text-anchor="middle" font-size="11">6. tools_condition → tools</text>
+
+          <!-- 7 ToolNode -->
+          <rect x="350" y="336" width="200" height="48" rx="8" fill="#2f6f5e" />
+          <text x="450" y="356" text-anchor="middle" fill="#fff" font-size="11">7. ToolNode</text>
+          <text x="450" y="372" text-anchor="middle" fill="#d7efe6" font-size="10">transfer_to_shares_agent</text>
+          <line x1="550" y1="360" x2="644" y2="360" stroke="#1c1915" marker-end="url(#a)" />
+
+          <!-- 8 nested invoke -->
+          <rect x="560" y="336" width="180" height="48" rx="8" fill="#3d5a80" />
+          <text x="650" y="356" text-anchor="middle" fill="#fff" font-size="11">8. nested invoke</text>
+          <text x="650" y="372" text-anchor="middle" fill="#dce8f5" font-size="10">new MessagesState</text>
+
+          <!-- 9 shares_agent -->
+          <rect x="560" y="400" width="180" height="44" rx="8" fill="#3d5a80" />
+          <text x="650" y="418" text-anchor="middle" fill="#fff" font-size="11">9. shares_agent</text>
+          <text x="650" y="434" text-anchor="middle" fill="#dce8f5" font-size="10">+ shares system prompt</text>
+          <line x1="740" y1="422" x2="824" y2="422" stroke="#1c1915" marker-end="url(#a)" />
+
+          <rect x="760" y="400" width="140" height="44" rx="8" fill="#7a4e2d" />
+          <text x="830" y="418" text-anchor="middle" fill="#fff" font-size="11">10. Vertex Gemini</text>
+          <text x="830" y="434" text-anchor="middle" fill="#f3e6db" font-size="10">shares tools schema</text>
+          <line x1="760" y1="444" x2="656" y2="474" stroke="#1c1915" marker-end="url(#a)" />
+
+          <rect x="555" y="462" width="190" height="44" rx="8" fill="#3d5a80" />
+          <text x="650" y="480" text-anchor="middle" fill="#fff" font-size="11">11. AIMessage tool_calls</text>
+          <text x="650" y="496" text-anchor="middle" fill="#dce8f5" font-size="10">e.g. get_share_quote(IBM)</text>
+
+          <rect x="555" y="520" width="190" height="40" rx="8" fill="#fffaf3" stroke="#3d5a80" />
+          <text x="650" y="545" text-anchor="middle" font-size="11">12. map “tools” → shares_tools</text>
+
+          <rect x="555" y="576" width="190" height="44" rx="8" fill="#3d5a80" />
+          <text x="650" y="594" text-anchor="middle" fill="#fff" font-size="11">13. shares_tools</text>
+          <text x="650" y="610" text-anchor="middle" fill="#dce8f5" font-size="10">alphavantage.query(…)</text>
+          <line x1="745" y1="598" x2="974" y2="598" stroke="#1c1915" marker-end="url(#a)" />
+
+          <rect x="910" y="576" width="140" height="44" rx="8" fill="#4a5d73" />
+          <text x="980" y="594" text-anchor="middle" fill="#fff" font-size="11">/query JSON</text>
+          <text x="980" y="610" text-anchor="middle" fill="#dce8f5" font-size="10">apikey from .env</text>
+          <line x1="910" y1="620" x2="656" y2="648" stroke="#1c1915" marker-end="url(#a)" />
+
+          <rect x="555" y="636" width="190" height="44" rx="8" fill="#3d5a80" />
+          <text x="650" y="654" text-anchor="middle" fill="#fff" font-size="11">14. ToolMessage → agent</text>
+          <text x="650" y="670" text-anchor="middle" fill="#dce8f5" font-size="10">loop until no tool_calls</text>
+          <line x1="560" y1="658" x2="456" y2="718" stroke="#1c1915" marker-end="url(#a)" />
+
+          <rect x="350" y="700" width="200" height="48" rx="8" fill="#2f6f5e" />
+          <text x="450" y="720" text-anchor="middle" fill="#fff" font-size="11">15. parent ToolMessage</text>
+          <text x="450" y="736" text-anchor="middle" fill="#d7efe6" font-size="10">only final shares text</text>
+          <line x1="450" y1="748" x2="450" y2="768" stroke="#1c1915" />
+
+          <rect x="350" y="772" width="200" height="48" rx="8" fill="#2f6f5e" />
+          <text x="450" y="792" text-anchor="middle" fill="#fff" font-size="11">16. agent → Gemini → END</text>
+          <text x="450" y="808" text-anchor="middle" fill="#d7efe6" font-size="10">user-facing AIMessage</text>
+          <line x1="350" y1="796" x2="76" y2="860" stroke="#1c1915" marker-end="url(#a)" />
+
+          <rect x="20" y="844" width="100" height="40" rx="8" fill="#6b5b3e" />
+          <text x="70" y="869" text-anchor="middle" fill="#fff" font-size="11">reply</text>
+        </svg>
+      </div>
+      <p class="caption">
+        Inner quote/overview/news calls (steps 11–14) can repeat. Each is another
+        Gemini round-trip plus an HTTP call. The parent thread never sees those
+        inner <code>ToolMessage</code>s — only the specialist’s last text.
+      </p>
+    </section>
+
+    <section id="messages">
+      <h2>What sits on each thread</h2>
+      <p>
+        Parent and shares graphs both use <code>MessagesState</code> (a list that
+        only appends). They are <strong>not</strong> the same list.
+      </p>
+      <table>
+        <thead>
+          <tr><th>When</th><th>Parent messages</th><th>Shares messages</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>User sends the prompt</td>
+            <td><code>HumanMessage("IBM latest quote…")</code></td>
+            <td>(none yet)</td>
+          </tr>
+          <tr>
+            <td>After first parent Gemini call</td>
+            <td>+ <code>AIMessage</code> with <code>tool_calls=[{name: transfer_to_shares_agent, args: {task: "…"}}]</code></td>
+            <td>(none yet)</td>
+          </tr>
+          <tr>
+            <td>Handoff starts nested invoke</td>
+            <td>blocked inside <code>ToolNode</code></td>
+            <td><code>HumanMessage(task)</code> — new list</td>
+          </tr>
+          <tr>
+            <td>Shares Gemini wants a quote</td>
+            <td>still blocked</td>
+            <td>+ <code>AIMessage</code> <code>tool_calls=[{name: get_share_quote, args: {symbol: "IBM"}}]</code></td>
+          </tr>
+          <tr>
+            <td>After Alpha Vantage</td>
+            <td>still blocked</td>
+            <td>+ <code>ToolMessage</code> (JSON snippet)</td>
+          </tr>
+          <tr>
+            <td>Shares done</td>
+            <td>+ <code>ToolMessage</code> = last shares <code>AIMessage.content</code> only</td>
+            <td>discarded after the nested invoke returns</td>
+          </tr>
+          <tr>
+            <td>Parent Gemini answers</td>
+            <td>+ final <code>AIMessage</code> (no tool_calls) → END</td>
+            <td>—</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="caption">
+        That is why the chat UI can show the handoff after the fact, but not
+        <code>get_share_quote</code> while it runs: those messages never join the
+        parent session stored in <code>persistence/sessions.py</code>.
+      </p>
+    </section>
+
+    <section id="paths">
+      <h2>Three runtime paths</h2>
+      <h3>Path A — not about stocks</h3>
+      <p>Example: <code>What is 21 + 21, and what time is it in UTC?</code></p>
+      <div class="diagram">
+        <svg viewBox="0 0 1040 160" role="img">
+          <title>General tool path never enters shares</title>
+          <defs>
+            <marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#1c1915" />
+            </marker>
+          </defs>
+          <rect x="16" y="50" width="90" height="50" rx="10" fill="#6b5b3e" />
+          <text x="61" y="80" text-anchor="middle" fill="#fff" font-size="12">START</text>
+          <rect x="140" y="40" width="150" height="70" rx="10" fill="#2f6f5e" />
+          <text x="215" y="70" text-anchor="middle" fill="#fff" font-size="13" font-weight="700">agent</text>
+          <text x="215" y="90" text-anchor="middle" fill="#d7efe6" font-size="11">Gemini</text>
+          <rect x="340" y="40" width="200" height="70" rx="10" fill="#2f6f5e" />
+          <text x="440" y="70" text-anchor="middle" fill="#fff" font-size="13" font-weight="700">tools</text>
+          <text x="440" y="90" text-anchor="middle" fill="#d7efe6" font-size="11">add_numbers / utc time</text>
+          <rect x="590" y="40" width="150" height="70" rx="10" fill="#2f6f5e" />
+          <text x="665" y="70" text-anchor="middle" fill="#fff" font-size="13" font-weight="700">agent</text>
+          <text x="665" y="90" text-anchor="middle" fill="#d7efe6" font-size="11">final answer</text>
+          <rect x="780" y="50" width="90" height="50" rx="10" fill="#1c1915" />
+          <text x="825" y="80" text-anchor="middle" fill="#fff" font-size="12">END</text>
+          <rect x="890" y="40" width="130" height="70" rx="10" fill="#efe8dc" stroke="#d9d0c2" />
+          <text x="955" y="70" text-anchor="middle" font-size="12">shares</text>
+          <text x="955" y="90" text-anchor="middle" font-size="11" fill="#5c564c">not used</text>
+          <line x1="106" y1="75" x2="134" y2="75" stroke="#1c1915" marker-end="url(#b)" />
+          <line x1="290" y1="75" x2="334" y2="75" stroke="#1c1915" marker-end="url(#b)" />
+          <line x1="540" y1="75" x2="584" y2="75" stroke="#1c1915" marker-end="url(#b)" />
+          <line x1="740" y1="75" x2="774" y2="75" stroke="#1c1915" marker-end="url(#b)" />
+        </svg>
+      </div>
+
+      <h3>Path B — stocks / shares / tickers</h3>
+      <p>The parent model is instructed to call <code>transfer_to_shares_agent</code> instead of inventing prices.</p>
+      <div class="diagram">
+        <svg viewBox="0 0 1040 210" role="img">
+          <title>Stock path enters nested shares graph</title>
+          <defs>
+            <marker id="c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#1c1915" />
+            </marker>
+          </defs>
+          <rect x="16" y="80" width="80" height="48" rx="10" fill="#6b5b3e" />
+          <text x="56" y="109" text-anchor="middle" fill="#fff" font-size="12">START</text>
+          <rect x="120" y="70" width="120" height="68" rx="10" fill="#2f6f5e" />
+          <text x="180" y="100" text-anchor="middle" fill="#fff" font-size="13" font-weight="700">agent</text>
+          <text x="180" y="118" text-anchor="middle" fill="#d7efe6" font-size="11">handoff call</text>
+          <rect x="268" y="70" width="130" height="68" rx="10" fill="#2f6f5e" />
+          <text x="333" y="100" text-anchor="middle" fill="#fff" font-size="13" font-weight="700">tools</text>
+          <text x="333" y="118" text-anchor="middle" fill="#d7efe6" font-size="11">handoff tool</text>
+          <rect x="430" y="20" width="360" height="168" rx="12" fill="#e8eef5" stroke="#3d5a80" />
+          <text x="610" y="42" text-anchor="middle" font-size="12" fill="#3d5a80">nested StateGraph (blocking)</text>
+          <rect x="450" y="58" width="130" height="56" rx="8" fill="#3d5a80" />
+          <text x="515" y="82" text-anchor="middle" fill="#fff" font-size="12">shares_agent</text>
+          <text x="515" y="100" text-anchor="middle" fill="#dce8f5" font-size="10">Gemini</text>
+          <rect x="600" y="58" width="130" height="56" rx="8" fill="#3d5a80" />
+          <text x="665" y="82" text-anchor="middle" fill="#fff" font-size="12">shares_tools</text>
+          <text x="665" y="100" text-anchor="middle" fill="#dce8f5" font-size="10">HTTP</text>
+          <rect x="500" y="128" width="220" height="44" rx="8" fill="#4a5d73" />
+          <text x="610" y="155" text-anchor="middle" fill="#fff" font-size="12">alphavantage.co/query</text>
+          <rect x="820" y="70" width="100" height="68" rx="10" fill="#2f6f5e" />
+          <text x="870" y="100" text-anchor="middle" fill="#fff" font-size="13" font-weight="700">agent</text>
+          <text x="870" y="118" text-anchor="middle" fill="#d7efe6" font-size="11">summarize</text>
+          <rect x="944" y="80" width="80" height="48" rx="10" fill="#1c1915" />
+          <text x="984" y="109" text-anchor="middle" fill="#fff" font-size="12">END</text>
+          <line x1="96" y1="104" x2="114" y2="104" stroke="#1c1915" marker-end="url(#c)" />
+          <line x1="240" y1="104" x2="262" y2="104" stroke="#1c1915" marker-end="url(#c)" />
+          <line x1="398" y1="104" x2="424" y2="104" stroke="#1c1915" marker-end="url(#c)" />
+          <line x1="790" y1="104" x2="814" y2="104" stroke="#1c1915" marker-end="url(#c)" />
+          <line x1="920" y1="104" x2="938" y2="104" stroke="#1c1915" marker-end="url(#c)" />
+          <line x1="580" y1="86" x2="594" y2="86" stroke="#fff" marker-end="url(#c)" />
+          <line x1="665" y1="114" x2="665" y2="128" stroke="#1c1915" />
+        </svg>
+      </div>
+
+      <h3>Path C — weather / forecast / air quality</h3>
+      <p>
+        Same handoff shape as Path B. The parent calls
+        <code>transfer_to_weather_agent</code>. The nested graph geocodes a
+        place name, then hits Open-Meteo (no API key).
+      </p>
+      <div class="diagram">
+        <svg viewBox="0 0 1040 210" role="img">
+          <title>Weather path enters nested Open-Meteo graph</title>
+          <defs>
+            <marker id="c2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#1c1915" />
+            </marker>
+          </defs>
+          <rect x="16" y="80" width="80" height="48" rx="10" fill="#6b5b3e" />
+          <text x="56" y="109" text-anchor="middle" fill="#fff" font-size="12">START</text>
+          <rect x="120" y="70" width="120" height="68" rx="10" fill="#2f6f5e" />
+          <text x="180" y="100" text-anchor="middle" fill="#fff" font-size="13" font-weight="700">agent</text>
+          <text x="180" y="118" text-anchor="middle" fill="#d7efe6" font-size="11">weather handoff</text>
+          <rect x="268" y="70" width="130" height="68" rx="10" fill="#2f6f5e" />
+          <text x="333" y="100" text-anchor="middle" fill="#fff" font-size="13" font-weight="700">tools</text>
+          <text x="333" y="118" text-anchor="middle" fill="#d7efe6" font-size="11">weather tool</text>
+          <rect x="430" y="20" width="360" height="168" rx="12" fill="#e7f0ec" stroke="#2f6f5e" />
+          <text x="610" y="42" text-anchor="middle" font-size="12" fill="#2f6f5e">nested weather StateGraph</text>
+          <rect x="450" y="58" width="130" height="56" rx="8" fill="#2f6f5e" />
+          <text x="515" y="82" text-anchor="middle" fill="#fff" font-size="12">weather_agent</text>
+          <text x="515" y="100" text-anchor="middle" fill="#d7efe6" font-size="10">Gemini</text>
+          <rect x="600" y="58" width="130" height="56" rx="8" fill="#2f6f5e" />
+          <text x="665" y="82" text-anchor="middle" fill="#fff" font-size="12">weather_tools</text>
+          <text x="665" y="100" text-anchor="middle" fill="#d7efe6" font-size="10">HTTP, no key</text>
+          <rect x="500" y="128" width="220" height="44" rx="8" fill="#4a6b5e" />
+          <text x="610" y="155" text-anchor="middle" fill="#fff" font-size="12">open-meteo.com</text>
+          <rect x="820" y="70" width="100" height="68" rx="10" fill="#2f6f5e" />
+          <text x="870" y="100" text-anchor="middle" fill="#fff" font-size="13" font-weight="700">agent</text>
+          <text x="870" y="118" text-anchor="middle" fill="#d7efe6" font-size="11">summarize</text>
+          <rect x="944" y="80" width="80" height="48" rx="10" fill="#1c1915" />
+          <text x="984" y="109" text-anchor="middle" fill="#fff" font-size="12">END</text>
+          <line x1="96" y1="104" x2="114" y2="104" stroke="#1c1915" marker-end="url(#c2)" />
+          <line x1="240" y1="104" x2="262" y2="104" stroke="#1c1915" marker-end="url(#c2)" />
+          <line x1="398" y1="104" x2="424" y2="104" stroke="#1c1915" marker-end="url(#c2)" />
+          <line x1="790" y1="104" x2="814" y2="104" stroke="#1c1915" marker-end="url(#c2)" />
+          <line x1="920" y1="104" x2="938" y2="104" stroke="#1c1915" marker-end="url(#c2)" />
+          <line x1="580" y1="86" x2="594" y2="86" stroke="#fff" />
+          <line x1="665" y1="114" x2="665" y2="128" stroke="#1c1915" />
+        </svg>
+      </div>
+    </section>
+
+    <section id="layers">
+      <h2>Process layers</h2>
+      <p>One Python process. Three networks: Vertex (Gemini), alphavantage.co, open-meteo.com.</p>
+      <div class="diagram">
+        <svg viewBox="0 0 1040 360" role="img">
+          <title>In-process graphs and external APIs</title>
+          <rect x="16" y="16" width="1008" height="70" rx="12" fill="#efe8dc" stroke="#d9d0c2" />
+          <text x="36" y="40" font-size="12" fill="#5c564c">Entrypoints (same compiled parent)</text>
+          <rect x="36" y="50" width="200" height="26" rx="6" fill="#6b5b3e" />
+          <text x="136" y="68" text-anchor="middle" fill="#fff" font-size="12">python -m …apps.cli</text>
+          <rect x="252" y="50" width="200" height="26" rx="6" fill="#6b5b3e" />
+          <text x="352" y="68" text-anchor="middle" fill="#fff" font-size="12">python -m …api.app :8000</text>
+          <rect x="468" y="50" width="240" height="26" rx="6" fill="#6b5b3e" />
+          <text x="588" y="68" text-anchor="middle" fill="#fff" font-size="12">.env (ADC project + AV key)</text>
+          <rect x="724" y="50" width="280" height="26" rx="6" fill="#6b5b3e" />
+          <text x="864" y="68" text-anchor="middle" fill="#fff" font-size="12">HumanMessage → parent state</text>
+
+          <rect x="16" y="102" width="1008" height="100" rx="12" fill="#e7f0ec" stroke="#d9d0c2" />
+          <text x="36" y="126" font-size="12" fill="#5c564c">In-process LangGraph</text>
+          <rect x="36" y="140" width="230" height="46" rx="8" fill="#2f6f5e" />
+          <text x="151" y="168" text-anchor="middle" fill="#fff" font-size="13">parent agent ↔ tools</text>
+          <rect x="282" y="140" width="230" height="46" rx="8" fill="#3d5a80" />
+          <text x="397" y="168" text-anchor="middle" fill="#fff" font-size="13">shares nested graph</text>
+          <rect x="528" y="140" width="230" height="46" rx="8" fill="#2f6f5e" />
+          <text x="643" y="168" text-anchor="middle" fill="#fff" font-size="13">weather nested graph</text>
+          <rect x="774" y="140" width="226" height="46" rx="8" fill="#fffaf3" stroke="#2f6f5e" />
+          <text x="887" y="168" text-anchor="middle" font-size="12">catalog handoffs (if allowed)</text>
+
+          <rect x="16" y="218" width="328" height="120" rx="12" fill="#f3e6db" stroke="#d9d0c2" />
+          <text x="36" y="246" font-size="12" fill="#5c564c">Google Cloud — every model node</text>
+          <text x="36" y="274" font-size="13">ADC → ChatGoogleGenerativeAI</text>
+          <text x="36" y="296" font-size="13">vertexai=True → gemini-2.5-flash</text>
+          <rect x="360" y="218" width="328" height="120" rx="12" fill="#e8eef5" stroke="#d9d0c2" />
+          <text x="380" y="246" font-size="12" fill="#5c564c">Market — shares_tools only</text>
+          <text x="380" y="274" font-size="13">ALPHAVANTAGE_API_KEY</text>
+          <text x="380" y="296" font-size="13">alphavantage.co/query</text>
+          <rect x="704" y="218" width="320" height="120" rx="12" fill="#e7f0ec" stroke="#d9d0c2" />
+          <text x="724" y="246" font-size="12" fill="#5c564c">Weather — weather_tools only</text>
+          <text x="724" y="274" font-size="13">No API key</text>
+          <text x="724" y="296" font-size="13">open-meteo.com (forecast + geo + AQ)</text>
+        </svg>
+      </div>
+    </section>
+
+    <section id="graphs">
+      <h2>Graph wiring (compile-time)</h2>
+      <h3>Parent — <code>orchestration/supervisor.py</code></h3>
+      <ul>
+        <li>Built by the shared factory in <code>specialists/_base/graph_factory.py</code>.</li>
+        <li>Nodes: <code>agent</code>, <code>tools</code> (<code>ToolNode</code>).</li>
+        <li>Edges: <code>START → agent</code>; <code>tools → agent</code>; <code>agent</code> uses <code>tools_condition</code>.</li>
+        <li>General tools plus <code>make_handoff_tool(spec)</code> for each allowed catalog entry — not a hardcoded list in <code>tools.py</code>.</li>
+      </ul>
+      <h3>Shares — <code>specialists/shares/</code></h3>
+      <ul>
+        <li>Supervisor nodes: <code>shares_agent</code>, <code>shares_tools</code> (handoffs only, no Alpha Vantage).</li>
+        <li>Compiled per allowed nested ids. Quote and/or fundamentals handoffs from <code>subcatalog.py</code>.</li>
+        <li>Quote graph: search, quote, daily, news, movers. Fundamentals graph: search + overview.</li>
+      </ul>
+      <div class="steps">
+        <div class="step"><div><strong>Parent compile.</strong> <code>runtime.graph_for(principal)</code> compiles once per allowed-agent-id set. <code>get_llm()</code> loads ADC.</div></div>
+        <div class="step"><div><strong>Parent invoke.</strong> Principal bound on a contextvar; <code>{"messages": [HumanMessage(...)]}</code>.</div></div>
+        <div class="step"><div><strong>Parent model.</strong> Dynamic system prompt + history → Gemini with general tools plus allowed handoffs only.</div></div>
+        <div class="step"><div><strong>Handoff.</strong> Catalog generates <code>transfer_to_&lt;id&gt;_agent</code>. <code>spec.get_agent()</code> starts the nested graph.</div></div>
+        <div class="step shares"><div><strong>Nested invoke.</strong> Shares supervisor routes to quote and/or fundamentals graphs (fresh <code>MessagesState</code> each).</div></div>
+        <div class="step shares"><div><strong>Market HTTP.</strong> Only the child graph’s tools call <code>alphavantage.query</code>. JSON is truncated (~4000 chars).</div></div>
+        <div class="step shares"><div><strong>Shares END.</strong> Last <code>AIMessage</code> text is returned as a Python <code>str</code> to the parent tool.</div></div>
+        <div class="step"><div><strong>Parent continues.</strong> That string is a <code>ToolMessage</code>. Parent Gemini answers. No <code>tool_calls</code> → END.</div></div>
+      </div>
+      <table>
+        <thead>
+          <tr><th>Nested graph</th><th>Tool</th><th>Alpha Vantage <code>function</code></th></tr>
+        </thead>
+        <tbody>
+          <tr><td>quote</td><td><code>search_ticker</code></td><td><code>SYMBOL_SEARCH</code></td></tr>
+          <tr><td>quote</td><td><code>get_share_quote</code></td><td><code>GLOBAL_QUOTE</code></td></tr>
+          <tr><td>quote</td><td><code>get_daily_prices</code></td><td><code>TIME_SERIES_DAILY</code></td></tr>
+          <tr><td>quote</td><td><code>get_share_news</code></td><td><code>NEWS_SENTIMENT</code></td></tr>
+          <tr><td>quote</td><td><code>get_market_movers</code></td><td><code>TOP_GAINERS_LOSERS</code></td></tr>
+          <tr><td>fundamentals</td><td><code>search_ticker</code></td><td><code>SYMBOL_SEARCH</code></td></tr>
+          <tr><td>fundamentals</td><td><code>get_company_overview</code></td><td><code>OVERVIEW</code></td></tr>
+        </tbody>
+      </table>
+      <h3>Weather — <code>specialists/weather/</code></h3>
+      <ul>
+        <li>Nodes: <code>weather_agent</code>, <code>weather_tools</code>.</li>
+        <li>Same <code>tools_condition</code> map: <code>{"tools": "weather_tools", END: END}</code>.</li>
+        <li>No API key. Geocode a city name before forecast/air-quality calls.</li>
+      </ul>
+      <table>
+        <thead>
+          <tr><th>Weather tool</th><th>Open-Meteo endpoint</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>geocode_place</code></td><td><code>geocoding-api.open-meteo.com/v1/search</code></td></tr>
+          <tr><td><code>get_current_weather</code></td><td><code>api.open-meteo.com/v1/forecast</code> (current)</td></tr>
+          <tr><td><code>get_daily_forecast</code></td><td><code>api.open-meteo.com/v1/forecast</code> (daily)</td></tr>
+          <tr><td><code>get_air_quality</code></td><td><code>air-quality-api.open-meteo.com/v1/air-quality</code></td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="files">
+      <h2>File map</h2>
+      <p>Tools = capabilities. Graphs = wiring. HTTP = neither.</p>
+      <table>
+        <thead>
+          <tr><th>File</th><th>On the flow</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>apps/cli.py</code></td><td>CLI. Resolves principal, then <code>invoke_supervisor</code>.</td></tr>
+          <tr><td><code>api/app.py</code></td><td>FastAPI. <code>/</code> chat, <code>/architecture</code>, <code>/api/v1/*</code>.</td></tr>
+          <tr><td><code>identity/</code></td><td>Principal, roles → scopes, request contextvar.</td></tr>
+          <tr><td><code>catalog/</code></td><td><code>AgentSpec</code> + registry. Add specialists here.</td></tr>
+          <tr><td><code>orchestration/supervisor.py</code></td><td>Parent topology and dynamic system prompt.</td></tr>
+          <tr><td><code>orchestration/handoff.py</code></td><td>Generic handoff factory.</td></tr>
+          <tr><td><code>orchestration/runtime.py</code></td><td>Cache compiled graphs by allowed agent ids.</td></tr>
+          <tr><td><code>specialists/shares/</code></td><td>Supervisor + <code>quote/</code> + <code>fundamentals/</code> + Alpha Vantage client. Not listed twice in the parent catalog.</td></tr>
+          <tr><td><code>specialists/weather/</code></td><td>Spec, graph, four Open-Meteo tools, HTTP client.</td></tr>
+          <tr><td><code>specialists/_base/</code></td><td>Shared react-loop factory + tool policy / audit wrap.</td></tr>
+          <tr><td><code>core/llm.py</code></td><td>Shared Gemini factory for every model node.</td></tr>
+          <tr><td><code>persistence/</code></td><td>Tenant-scoped threads + audit events.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="auth">
+      <h2>Auth — Gemini needs ADC; weather does not</h2>
+      <div class="diagram">
+        <svg viewBox="0 0 1040 200" role="img">
+          <title>ADC for Gemini and env key for Alpha Vantage</title>
+          <defs>
+            <marker id="d" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#1c1915" />
+            </marker>
+          </defs>
+          <rect x="20" y="24" width="200" height="64" rx="10" fill="#fffaf3" stroke="#7a4e2d" />
+          <text x="120" y="50" text-anchor="middle" font-size="13">gcloud ADC / SA</text>
+          <text x="120" y="70" text-anchor="middle" font-size="11" fill="#5c564c">cloud-platform scope</text>
+          <rect x="260" y="24" width="240" height="64" rx="10" fill="#2f6f5e" />
+          <text x="380" y="50" text-anchor="middle" fill="#fff" font-size="13">ChatGoogleGenerativeAI</text>
+          <text x="380" y="70" text-anchor="middle" fill="#d7efe6" font-size="11">vertexai=True</text>
+          <rect x="540" y="24" width="200" height="64" rx="10" fill="#7a4e2d" />
+          <text x="640" y="60" text-anchor="middle" fill="#fff" font-size="13">Gemini 2.5 Flash</text>
+          <line x1="220" y1="56" x2="254" y2="56" stroke="#1c1915" marker-end="url(#d)" />
+          <line x1="500" y1="56" x2="534" y2="56" stroke="#1c1915" marker-end="url(#d)" />
+
+          <rect x="20" y="112" width="200" height="64" rx="10" fill="#fffaf3" stroke="#3d5a80" />
+          <text x="120" y="138" text-anchor="middle" font-size="13">.env</text>
+          <text x="120" y="158" text-anchor="middle" font-size="11" fill="#5c564c">ALPHAVANTAGE_API_KEY</text>
+          <rect x="260" y="112" width="240" height="64" rx="10" fill="#3d5a80" />
+          <text x="380" y="138" text-anchor="middle" fill="#fff" font-size="13">alphavantage.query</text>
+          <text x="380" y="158" text-anchor="middle" fill="#dce8f5" font-size="11">never logged</text>
+          <rect x="540" y="112" width="200" height="64" rx="10" fill="#4a5d73" />
+          <text x="640" y="148" text-anchor="middle" fill="#fff" font-size="13">alphavantage.co</text>
+          <line x1="220" y1="144" x2="254" y2="144" stroke="#1c1915" marker-end="url(#d)" />
+          <line x1="500" y1="144" x2="534" y2="144" stroke="#1c1915" marker-end="url(#d)" />
+        </svg>
+      </div>
+      <p>
+        Gemini: <code>GOOGLE_CLOUD_PROJECT</code>, <code>GOOGLE_CLOUD_LOCATION</code>
+        (default <code>us-central1</code>), <code>GEMINI_MODEL</code> (default
+        <code>gemini-2.5-flash</code>), <code>GOOGLE_GENAI_USE_VERTEXAI=true</code>.
+        Market: <code>ALPHAVANTAGE_API_KEY</code>. Free-tier Alpha Vantage is often
+        5 calls/minute; <code>Note</code> / <code>Information</code> in JSON is a
+        rate limit, not a broken graph. Weather: Open-Meteo is public; no extra
+        env var.
+      </p>
+    </section>
+
+    <section id="ui">
+      <h2>What the UI shows vs what actually ran</h2>
+      <table>
+        <thead>
+          <tr><th>Moment</th><th>On screen</th><th>In the process</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>You click Send</td>
+            <td>Your bubble. Send disabled. No spinner of inner tools.</td>
+            <td><code>POST /api/v1/chat</code> → <code>invoke_supervisor</code> (blocking).</td>
+          </tr>
+          <tr>
+            <td>Parent decides to hand off</td>
+            <td>Nothing new yet.</td>
+            <td>Gemini on Vertex; then nested shares <code>invoke</code>.</td>
+          </tr>
+          <tr>
+            <td>Shares calls Alpha Vantage</td>
+            <td>Still waiting.</td>
+            <td>One or more <code>/query</code> HTTP calls.</td>
+          </tr>
+          <tr>
+            <td>Parent returns</td>
+            <td>Full parent transcript: you, <code>agent → tool transfer_to_shares_agent</code>, tool result, final agent text.</td>
+            <td>Inner tool names are not in that transcript.</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="caption">
+        LangChain/LangGraph do not ship this page. Studio / Agent Chat UI are
+        separate products. Live inner traces need <code>astream</code> (not implemented).
+      </p>
+    </section>
+
+    <section id="next">
+      <h2>Growth path</h2>
+      <p>Keep <code>get_llm()</code>, the catalog, and the split: client, tools, spec, graph. Do not add handoffs by hand.</p>
+      <ol>
+        <li><strong>OIDC</strong> — replace <code>X-Role</code> with a verified token; store entitlements per tenant.</li>
+        <li><strong>Checkpointer</strong> — Postgres instead of the in-memory session map.</li>
+        <li><strong>More specialists</strong> — new folder + one registry import.</li>
+        <li><strong>Stream the UI</strong> so parent and inner tools appear while they run.</li>
+        <li><strong>Subgraph as a node</strong> — <code>graph.add_node("weather", weather_graph)</code> if inner messages should live on the parent thread.</li>
+      </ol>
+    </section>
+  </main>
+
+  <footer>
+    Matches <code>src/enterprise_agent/</code>: catalogued specialists, principal-scoped
+    tool binding, Gemini 2.5 Flash on Vertex (ADC), Alpha Vantage via settings,
+    Open-Meteo with no key.
+  </footer>
+</body>
+</html>
